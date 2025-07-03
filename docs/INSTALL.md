@@ -17,7 +17,7 @@ conda create -n dymvr python=3.8
 ### Install CMKD
 a. Clone this repository.
 ```shell
-git clone -b master --single-branch https://github.com/ho-tae/DyMVR.git
+git clone https://github.com/ho-tae/DyMVR.git
 ```
 
 b. Install the dependent libraries as follows:
