@@ -12,7 +12,7 @@ docker build -t dymvr_test .
 
 3. python setup.py devlop
 
-4. voxel_layer.cpython-37m-x86_64-linux-gnu.so file -> move ./pcdet/models/backbones_3d/util/
+4. Download https://drive.google.com/file/d/12Cgc2-fBSGmaICUWJKG6vL5b8x4ITuFz/view?usp=sharing / voxel_layer.cpython-37m-x86_64-linux-gnu.so file -> move ./pcdet/models/backbones_3d/util/
 
 5. Please follow [GETTING_START](docs/GETTING_STARTED.md) to train or evaluate the models
 
