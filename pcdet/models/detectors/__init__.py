@@ -14,6 +14,7 @@ from .voxel_mae_sst import VoxelMAE_SST
 from .sst import SST
 from .geo_mae_sst import GeoMAE_SST
 from .sst_conv import SST_Conv
+from .vf_sst import VF_SST
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -33,7 +34,8 @@ __all__ = {
     'VoxelMAE_SST' :VoxelMAE_SST,
     'SST' : SST,
     'GeoMAE_SST' : GeoMAE_SST,
-    'SST_Conv' : SST_Conv
+    'SST_Conv' : SST_Conv,
+    'VF_SST' : VF_SST
 }
 
 

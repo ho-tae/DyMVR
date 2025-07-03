@@ -1,6 +1,6 @@
 import pickle
 import time
-
+#from thop import profile
 import numpy as np
 import torch
 import tqdm
@@ -55,6 +55,10 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         load_data_to_gpu(batch_dict)
         with torch.no_grad():
             pred_dicts, ret_dict = model(batch_dict)
+            #flops, params = profile(model, (batch_dict, ))
+            #gflops = flops / 1e9
+            #print(f"Total FLOPs: {flops:.2f} FLOPs")
+            #print(f"GFLOPS: {gflops:.2f} GFLOPS")
         disp_dict = {}
 
         statistics_info(cfg, ret_dict, metric, disp_dict)

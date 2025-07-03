@@ -190,6 +190,7 @@ def main():
     )
 
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
+    
     if args.vis_online:
         model.vis_online = True
     with torch.no_grad():

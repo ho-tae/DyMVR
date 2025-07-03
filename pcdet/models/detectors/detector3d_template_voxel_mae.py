@@ -9,6 +9,7 @@ from ...utils.spconv_utils import find_all_spconv_keys
 from .. import backbones_2d, backbones_3d, dense_heads, roi_heads
 from ..backbones_2d import map_to_bev
 from ..backbones_3d import pfe, vfe
+from ..backbones_3d.vfe.vf_encoder import MultiFusionVoxel
 from ..backbones_3d.sst_v2 import SSTv2
 from ..backbones_3d.sst_input_layer_v2 import SSTInputLayerV2
 from ..sst.sst_v2_decoder import SSTv2Decoder
@@ -89,7 +90,18 @@ class Detector3DTemplate_voxel_mae(nn.Module):
             model_info_dict['module_list'].append(vfe_module)
             return [vfe_module], model_info_dict
         
-        else:    
+        elif self.model_cfg.VFE.NAME == "MultiFusionVoxel":
+            vfe_module = vfe.__all__[self.model_cfg.VFE.NAME](
+                sub_voxel_size_low=tuple(self.model_cfg.TRAIN_CFG.sub_voxel_size_low),
+                sub_voxel_size_med=tuple(self.model_cfg.TRAIN_CFG.sub_voxel_size_med),
+                voxel_size=tuple(self.model_cfg.TRAIN_CFG.voxel_size),
+                point_cloud_range=list(model_info_dict['point_cloud_range']),
+                grid_size=model_info_dict['grid_size'],
+            )
+            model_info_dict['module_list'].append(vfe_module)
+            return [vfe_module], model_info_dict
+        
+        else: 
             vfe_module = vfe.__all__[self.model_cfg.VFE.NAME](
                 num_point_features=model_info_dict['num_rawpoint_features'],
                 point_cloud_range=list(model_info_dict['point_cloud_range']),
@@ -181,10 +193,10 @@ class Detector3DTemplate_voxel_mae(nn.Module):
                 window_shape=tuple(self.model_cfg.BACKBONE_3D.WINDOW_SHAPE),
                 sparse_shape=tuple(self.model_cfg.TRAIN_CFG.grid_size),
             )
-            sst_backbone_module = SSTv2(d_model=[224, ] * self.model_cfg.TRAIN_CFG.encoder_num,
+            sst_backbone_module = SSTv2(d_model=[128, ] * self.model_cfg.TRAIN_CFG.encoder_num,
                             nhead=[8, ]* self.model_cfg.TRAIN_CFG.encoder_num,
-                            num_blocks=self.model_cfg.TRAIN_CFG.encoder_num, 
-                            dim_feedforward=[448,] * self.model_cfg.TRAIN_CFG.encoder_num,
+                            encoder_num_blocks=self.model_cfg.TRAIN_CFG.encoder_num, 
+                            dim_feedforward=[256,] * self.model_cfg.TRAIN_CFG.encoder_num,
                             output_shape=tuple(self.model_cfg.TRAIN_CFG.grid_size[:-1]),
                             num_attached_conv=3,
                             conv_kwargs=[
@@ -192,8 +204,8 @@ class Detector3DTemplate_voxel_mae(nn.Module):
                                 dict(kernel_size=3, dilation=1, padding=1, stride=1),
                                 dict(kernel_size=3, dilation=2, padding=2, stride=1),
                                 ],
-                            conv_in_channel=224,
-                            conv_out_channel=224,
+                            conv_in_channel=128,
+                            conv_out_channel=128,
                             debug=True,
                             layer_cfg=dict(use_bn=False, cosine=True, tau_min=0.01),
                             checkpoint_blocks=[0, 1], # Consider removing it if the GPU memory is suffcient

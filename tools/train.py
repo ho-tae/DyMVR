@@ -115,7 +115,10 @@ def main():
     if args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model.cuda()
-
+        #flops, params = profile(model, (batch_dict, ))
+        #gflops = flops / 1e9
+        #print(f"Total FLOPs: {flops:.2f} FLOPs")
+                #print(f"GFLOPS: {gflops:.2f} GFLOPS")
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
 
     # load checkpoint if it is possible
@@ -138,7 +141,7 @@ def main():
 
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
     if dist_train:
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()], find_unused_parameters=True)
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()]) #, find_unused_parameters=True)
     #logger.info(model)
 
     lr_scheduler, lr_warmup_scheduler = build_scheduler(

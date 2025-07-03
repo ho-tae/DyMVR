@@ -119,7 +119,7 @@ class DynamicVFE(nn.Module):
                  voxel_size=(0.2, 0.2, 4),
                  grid_size=None,
                  depth_downsample_factor=None,
-                 feat_channels=[112, 224],
+                 feat_channels=[64, 128],
                  with_distance=False,
                  with_cluster_center=True,
                  with_voxel_center=True,

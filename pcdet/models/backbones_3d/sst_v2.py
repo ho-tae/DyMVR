@@ -27,7 +27,7 @@ class SSTv2(nn.Module):
         self,
         d_model=[],
         nhead=[],
-        num_blocks=6,
+        encoder_num_blocks=6,
         dim_feedforward=[],
         dropout=0.0,
         activation="gelu",
@@ -48,23 +48,32 @@ class SSTv2(nn.Module):
         super().__init__()
         
         self.d_model = d_model
+        #self.d_model_cat = [x * 3 for x in self.d_model]
+        #self.dim_feedforward_cat = [x * 2 for x in dim_feedforward]
         self.nhead = nhead
         self.checkpoint_blocks = checkpoint_blocks
         self.conv_shortcut = conv_shortcut
 
         if in_channel is not None:
-            self.linear0 = nn.Linear(in_channel, d_model[0])
+            self.linear0 = nn.Linear(in_channel, d_model[0], bias=False)
 
         # Sparse Regional Attention Blocks(논문에서 말하는 SRA 모듈)
-        block_list=[]
-        for i in range(num_blocks):
-            block_list.append(
+        encoder_block_list=[]
+        encoder_cat_block_list=[]
+        for i in range(encoder_num_blocks):
+            encoder_block_list.append(
                 BasicShiftBlockV2(d_model[i], nhead[i], dim_feedforward[i],
                     dropout, activation, batch_first=False, block_id=i, layer_cfg=layer_cfg)
             )
-
-        self.block_list = nn.ModuleList(block_list)
             
+        #for i in range(encoder_num_blocks):
+        #    encoder_cat_block_list.append(
+        #        BasicShiftBlockV2(self.d_model_cat[i], nhead[i], self.dim_feedforward_cat[i],
+        #            dropout, activation, batch_first=False, block_id=i, layer_cfg=layer_cfg)
+        #    )
+
+        self.encoder_blocks = nn.ModuleList(encoder_block_list)
+        #self.encoder_cat_block_list = nn.ModuleList(encoder_cat_block_list)   
         self._reset_parameters()
 
         self.output_shape = output_shape
@@ -109,34 +118,251 @@ class SSTv2(nn.Module):
             
             self.conv_layer = nn.ModuleList(conv_list)
 
-    def forward(self, voxel_info):
+    def forward(self, voxel_info, model_info):
         '''
         '''
-        num_shifts = 2 
-        assert voxel_info['voxel_coors'].dtype == torch.int64, 'data type of coors should be torch.int64!'
+        num_shifts = 2
+        if model_info=="SST":
+            '''
+            #assert voxel_info['voxel_coors'].dtype == torch.int64, 'data type of coors should be torch.int64!'
 
-        device = voxel_info['voxel_coors'].device
-        batch_size = voxel_info['voxel_coors'][:, 0].max().item() + 1
-        voxel_feat = voxel_info['voxel_feats']
-        ind_dict_list = [voxel_info[f'flat2win_inds_shift{i}'] for i in range(num_shifts)]
-        padding_mask_list = [voxel_info[f'key_mask_shift{i}'] for i in range(num_shifts)]
-        pos_embed_list = [voxel_info[f'pos_dict_shift{i}'] for i in range(num_shifts)]
+            device = voxel_info[0]['voxel_coors'].device
+            batch_size = voxel_info[0]['voxel_coors'][:, 0].max().item() + 1
+            voxel_feats_info = []
+            for i in range(2):
+                voxel_feat = voxel_info[i]['voxel_feats']
+                ind_dict_list = [voxel_info[i][f'flat2win_inds_shift{i}'] for i in range(num_shifts)]
+                padding_mask_list = [voxel_info[i][f'key_mask_shift{i}'] for i in range(num_shifts)]
+                pos_embed_list = [voxel_info[i][f'pos_dict_shift{i}'] for i in range(num_shifts)]
+                voxel_feats_info.append([voxel_feat, ind_dict_list, padding_mask_list, pos_embed_list])
+                
+            voxel_feats_info = voxel_feats_info * 3
+            output = voxel_feats_info[0][0]
+            if hasattr(self, 'linear0'):
+                output = self.linear0(output)
+            for i, block in enumerate(self.encoder_blocks): # SRA(Sparse Regional Attention)
+                output = block(output, voxel_feats_info[i][3], voxel_feats_info[i][1], 
+                    voxel_feats_info[i][2], using_checkpoint = i in self.checkpoint_blocks)
+            '''
+            assert voxel_info['voxel_coors'].dtype == torch.int64, 'data type of coors should be torch.int64!'
 
-        output = voxel_feat
-        if hasattr(self, 'linear0'):
-            output = self.linear0(output)
-        for i, block in enumerate(self.block_list): # SRA(Sparse Regional Attention)
-            output = block(output, pos_embed_list, ind_dict_list, 
-                padding_mask_list, using_checkpoint = i in self.checkpoint_blocks)
+            device = voxel_info['voxel_coors'].device
+            batch_size = voxel_info['voxel_coors'][:, 0].max().item() + 1
+            voxel_feat = voxel_info['voxel_feats']
+            ind_dict_list = [voxel_info[f'flat2win_inds_shift{i}'] for i in range(num_shifts)]
+            padding_mask_list = [voxel_info[f'key_mask_shift{i}'] for i in range(num_shifts)]
+            pos_embed_list = [voxel_info[f'pos_dict_shift{i}'] for i in range(num_shifts)]
+            
+            output = voxel_feat
+            for i, block in enumerate(self.encoder_blocks):
+                output = block(output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks) 
+            
+        if model_info=="SA_CA":
+            low_mid_feat = voxel_info[1]["mid_low_voxel_feats"]
+            voxel_info = voxel_info[0]
+            assert voxel_info['voxel_coors'].dtype == torch.int64, 'data type of coors should be torch.int64!'
 
+            device = voxel_info['voxel_coors'].device
+            batch_size = voxel_info['voxel_coors'][:, 0].max().item() + 1
+            voxel_feat = voxel_info['voxel_feats']
+            ind_dict_list = [voxel_info[f'flat2win_inds_shift{i}'] for i in range(num_shifts)]
+            padding_mask_list = [voxel_info[f'key_mask_shift{i}'] for i in range(num_shifts)]
+            pos_embed_list = [voxel_info[f'pos_dict_shift{i}'] for i in range(num_shifts)]
+            
+            top_output = voxel_feat
+            for i, block in enumerate(self.encoder_blocks):
+                top_output = block(top_output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks)    
+                
+            mid_low_output = low_mid_feat
+            for i, block in enumerate(self.encoder_blocks):
+                mid_low_output = block(mid_low_output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks)   
+            
+            after_output = mid_low_output
+            
+            for i, block in enumerate(self.encoder_blocks):                
+                if i != 0:
+                    after_output = output
+                    output = torch.cat([before_output, after_output])
+                    before_output = after_output
+                else:
+                    before_output = top_output
+                    output = torch.cat([before_output, after_output])
+                output = block(output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks, cross_atten=True)
+                
+        if model_info=="SA_CA_SA":
+            assert voxel_info[0]['voxel_coors'].dtype == torch.int64, 'data type of coors should be torch.int64!'
+
+            device = voxel_info[0]['voxel_coors'].device
+            batch_size = voxel_info[0]['voxel_coors'][:, 0].max().item() + 1
+            voxel_feat = voxel_info[0]['voxel_feats']
+            ind_dict_list = [voxel_info[0][f'flat2win_inds_shift{i}'] for i in range(num_shifts)]
+            padding_mask_list = [voxel_info[0][f'key_mask_shift{i}'] for i in range(num_shifts)]
+            pos_embed_list = [voxel_info[0][f'pos_dict_shift{i}'] for i in range(num_shifts)]
+            
+            low_mid_feat = voxel_info[1]["mid_low_voxel_feats"]
+            top_output = voxel_feat
+            for i, block in enumerate(self.encoder_blocks):
+                top_output = block(top_output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks)    
+                
+            mid_low_output = low_mid_feat
+            for i, block in enumerate(self.encoder_blocks):
+                mid_low_output = block(mid_low_output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks)   
+            
+            for i, block in enumerate(self.encoder_blocks[:3]):                
+                if i != 0:
+                    after_output = output_1
+                    output_1 = torch.cat([before_output, after_output])
+                    before_output = after_output
+                else:
+                    before_output = top_output
+                    output_1 = torch.cat([before_output, mid_low_output])
+                output_1 = block(output_1, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks, cross_atten=True)
+            
+            for i, block in enumerate(self.encoder_blocks[:3]):                
+                if i != 0:
+                    after_output_2 = output_2
+                    output_2 = torch.cat([before_output_2, after_output_2])
+                    before_output_2 = after_output
+                else:
+                    before_output_2 = mid_low_output
+                    output_2 = torch.cat([before_output_2, top_output])
+                output_2 = block(output_2, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks, cross_atten=True)
+            
+            ind_dict_list_2 = [voxel_info[1][f'flat2win_inds_shift{i}'] for i in range(num_shifts)]
+            padding_mask_list_2 = [voxel_info[1][f'key_mask_shift{i}'] for i in range(num_shifts)]
+            pos_embed_list_2 = [voxel_info[1][f'pos_dict_shift{i}'] for i in range(num_shifts)]
+            
+            output = torch.cat([output_1, output_2], dim=1)
+            
+            for i, block in enumerate(self.encoder_cat_block_list[:3]):
+                output = block(output, pos_embed_list_2, ind_dict_list_2,
+                    padding_mask_list_2, using_checkpoint = i in self.checkpoint_blocks)   
+        
+            if not self.masked:
+                output = self.recover_bev(output, voxel_info[0]['voxel_coors'], batch_size)
+                output = output.to(device)
+                output_list = []
+                if self.num_attached_conv > 0:
+                    for conv in self.conv_layer.to(device):
+                        temp = conv(output.to(device))
+                        if temp.shape == output.shape:
+                            output = temp + output
+                        else:
+                            output = temp
+                        
+                output_list.append(output)
+                return output_list
+            else:
+                voxel_info[0]["output"] = output
+                return voxel_info[0]
+            
+        if model_info=="SA_CA_SA_V3":
+            assert voxel_info[0]['voxel_coors'].dtype == torch.int64, 'data type of coors should be torch.int64!'
+
+            device = voxel_info[0]['voxel_coors'].device
+            batch_size = voxel_info[0]['voxel_coors'][:, 0].max().item() + 1
+            voxel_feat = voxel_info[0]['voxel_feats']
+            ind_dict_list = [voxel_info[0][f'flat2win_inds_shift{i}'] for i in range(num_shifts)]
+            padding_mask_list = [voxel_info[0][f'key_mask_shift{i}'] for i in range(num_shifts)]
+            pos_embed_list = [voxel_info[0][f'pos_dict_shift{i}'] for i in range(num_shifts)]
+            
+            top_output = voxel_feat
+            for i, block in enumerate(self.encoder_blocks):
+                top_output = block(top_output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks)    
+                
+            mid_output = voxel_info[0]["mid_voxel_feats"]
+            for i, block in enumerate(self.encoder_blocks):
+                mid_output = block(mid_output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks)   
+                
+            low_output = voxel_info[0]["low_voxel_feats"]
+            for i, block in enumerate(self.encoder_blocks):
+                low_output = block(low_output, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks)
+            
+            for i, block in enumerate(self.encoder_blocks[:3]):                
+                if i != 0:
+                    after_output = output_1
+                    output_1 = torch.cat([before_output, after_output])
+                    before_output = after_output
+                else:
+                    before_output = top_output
+                    output_1 = torch.cat([before_output, mid_output])
+                output_1 = block(output_1, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks, cross_atten=True)
+            
+            for i, block in enumerate(self.encoder_blocks[:3]):                
+                if i != 0:
+                    after_output_2 = output_2
+                    output_2 = torch.cat([before_output_2, after_output_2])
+                    before_output_2 = after_output
+                else:
+                    before_output_2 = mid_output
+                    output_2 = torch.cat([before_output_2, low_output])
+                output_2 = block(output_2, pos_embed_list, ind_dict_list,
+                    padding_mask_list, using_checkpoint = i in self.checkpoint_blocks, cross_atten=True)
+            
+            #for i, block in enumerate(self.encoder_blocks[:3]):                
+            #    if i != 0:
+            #        after_output_3 = output_3
+            #        output_3 = torch.cat([before_output_3, after_output_3])
+            #        before_output_3 = after_output
+            #    else:
+            #        before_output_3 = top_output
+            #        output_3 = torch.cat([before_output_3, low_output])
+            #    output_3 = block(output_3, pos_embed_list, ind_dict_list,
+            #        padding_mask_list, using_checkpoint = i in self.checkpoint_blocks, cross_atten=True)
+            
+            output = torch.cat([output_1, output_2], dim=1)
+                        
+            #ind_dict_list_2 = [voxel_info[1][f'flat2win_inds_shift{i}'] for i in range(num_shifts)]
+            #padding_mask_list_2 = [voxel_info[1][f'key_mask_shift{i}'] for i in range(num_shifts)]
+            #pos_embed_list_2 = [voxel_info[1][f'pos_dict_shift{i}'] for i in range(num_shifts)]
+            
+            #output = torch.cat([output_1, output_2], dim=1)
+            
+            #for i, block in enumerate(self.encoder_cat_block_list[:3]):
+            #    output = block(output, pos_embed_list_2, ind_dict_list_2,
+            #        padding_mask_list_2, using_checkpoint = i in self.checkpoint_blocks)   
+        
+            if not self.masked:
+                output = self.recover_bev(output, voxel_info[0]['voxel_coors'], batch_size)
+                output = output.to(device)
+                output_list = []
+                if self.num_attached_conv > 0:
+                    for conv in self.conv_layer:
+                        temp = conv(output.to(device))
+                        if temp.shape == output.shape:
+                            output = temp + output
+                        else:
+                            output = temp
+                        
+                output_list.append(output)
+                return output_list
+            else:
+                voxel_info[0]["output"] = output
+                return voxel_info[0]
+        
         # If masked we want to send the output to the decoder and not a FPN how requires dense bev image
         if not self.masked:
             output = self.recover_bev(output, voxel_info['voxel_coors'], batch_size)
             output = output.to(device)
             output_list = []
             if self.num_attached_conv > 0:
-                for conv in self.conv_layer.to(device):
+                
+                for conv in self.conv_layer:
                     temp = conv(output.to(device))
+                #for conv in self.conv_layer.to(device):
+                #    temp = conv(output.to(device))
                     if temp.shape == output.shape:
                         output = temp + output
                     else:

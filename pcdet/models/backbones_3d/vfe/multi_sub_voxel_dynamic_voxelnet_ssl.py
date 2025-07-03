@@ -12,7 +12,7 @@ from .voxel_encoder import DynamicScatterVFE
 from pcdet.utils import loss_utils
 from pcdet.ops.sst.transform import bbox3d2result
 from pcdet.ops.sst.sst_ops import get_inner_win_inds, scatter_v2
-from pcdet.models.backbones_3d.depth_wise_conv import DepthSepaConv
+#from pcdet.models.backbones_3d.depth_wise_conv import DepthSepaConv
 
 eps = 1e-9
 
@@ -143,7 +143,7 @@ class MultiSubVoxelDynamicVoxelNetSSL(nn.Module):
         self.drop_points_th = 100
         self.pred_dims= 3
         
-        self.layer_norm = nn.LayerNorm(normalized_shape=224)
+        #self.layer_norm = nn.LayerNorm(normalized_shape=224)
         
         self.reg_loss = loss
         self.use_chamfer = use_chamfer

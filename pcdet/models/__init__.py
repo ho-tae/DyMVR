@@ -2,7 +2,7 @@ from collections import namedtuple
 
 import numpy as np
 import torch
-
+from thop import profile
 from .detectors import build_detector
 
 try:
@@ -40,7 +40,10 @@ def model_fn_decorator():
     def model_func(model, batch_dict):
         load_data_to_gpu(batch_dict)
         ret_dict, tb_dict, disp_dict = model(batch_dict)
-
+        #flops, params = profile(model, (batch_dict, ))
+        #gflops = flops / 1e9
+        #print(f"Total FLOPs: {flops:.2f} FLOPs")
+        #print(f"GFLOPS: {gflops:.2f} GFLOPS")
         loss = ret_dict['loss'].mean()
         if hasattr(model, 'update_global_step'):
             model.update_global_step()

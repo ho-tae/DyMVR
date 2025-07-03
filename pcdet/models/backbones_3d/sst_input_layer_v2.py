@@ -1,15 +1,9 @@
 # move the computation of position embeding and mask in middle_encoder_layer
-import math
-import numpy as np
-
 import torch
 from mmcv.runner import auto_fp16
 from torch import nn
-from pcdet.models.backbones_3d.spconv_backbone import VoxelResBackBone_low, VoxelResBackBone_mid
-from pcdet.ops.sst.sst_ops import flat2window_v2, window2flat_v2, get_inner_win_inds, make_continuous_inds, get_flat2win_inds_v2, get_window_coors
-import random
-import pickle as pkl
-import os
+from pcdet.ops.sst.sst_ops import flat2window_v2, window2flat_v2, get_inner_win_inds, get_flat2win_inds_v2, get_window_coors
+
 
 
 class SSTInputLayerV2(nn.Module):
@@ -48,13 +42,41 @@ class SSTInputLayerV2(nn.Module):
         self.normalize_pos = normalize_pos
         self.pos_temperature = pos_temperature
         self.mute = mute
-        
-        self.low_features_spconv = VoxelResBackBone_low(32, [4, 880, 880]) #self.low_grid_size[::-1] + [1, 0, 0])
-        self.mid_features_spconv = VoxelResBackBone_mid(64, [2, 440, 440]) #self.mid_grid_size[::-1] + [1, 0, 0])
+
         
     @auto_fp16(apply_to=('voxel_feat', ))
-    def forward(self, voxel_feats, voxel_coors, batch_size=None):
-        '''voxel_features, feature_coors, voxel_low_features, feature_low_coors, voxel_med_features, feature_med_coors,
+    def forward(self, voxel_feats, voxel_coors, top_mid_low_voxel_info=False):
+        if top_mid_low_voxel_info:
+            top_voxel_feats = voxel_feats[0]
+            mid_low_voxel_feats = voxel_feats[1]
+            
+            top_voxel_info = self.get_voxel_info(top_voxel_feats, voxel_coors)
+            mid_low_voxel_info = self.get_voxel_info(mid_low_voxel_feats, voxel_coors, cat=True)
+            
+            mid_low_voxel_info["mid_low_voxel_feats"] = mid_low_voxel_feats
+            return [top_voxel_info, mid_low_voxel_info]
+        else:
+            if len(voxel_feats)==1:
+                voxel_info = self.get_voxel_info(voxel_feats[0], voxel_coors)
+                #voxel_info_2_window = self.get_voxel_info(voxel_feats[0], voxel_coors, multi_window='middle')
+                #voxel_info_3_window = self.get_voxel_info(voxel_feats[0], voxel_coors, multi_window='high')
+                #voxel_info = [voxel_info_1_window, voxel_info_2_window] # voxel_info_3_window]
+                #self.window_shape = [int(x/2) for x in self.window_shape]
+                #self.window_shape[-1] = 1
+                return voxel_info
+            
+            voxel_info = self.get_voxel_info(voxel_feats[0], voxel_coors)
+            voxel_cat_info= self.get_voxel_info(voxel_feats[0], voxel_coors, cat=True)
+            if len(voxel_feats)==3:
+                voxel_info["mid_voxel_feats"] = voxel_feats[1]
+                voxel_info["low_voxel_feats"] = voxel_feats[2]
+                return [voxel_info, voxel_cat_info]
+            
+            voxel_info["mid_low_voxel_feats"] = voxel_feats[1]
+            return voxel_info
+    
+    def get_voxel_info(self, voxel_feats, voxel_coors, cat=False, multi_window=None):
+        '''
         Args:
             voxel_feats: shape=[N, C], N is the voxel num in the batch.
             coors: shape=[N, 4], [b, z, y, x]
@@ -63,10 +85,19 @@ class SSTInputLayerV2(nn.Module):
             flat2win_inds_list: two dict containing transformation information for non-shifted grouping and shifted grouping, respectively. The two dicts are used in function flat2window and window2flat.
             voxel_info: dict containing extra information of each voxel for usage in the backbone.
         '''
-        
+    
         original_index = torch.arange(len(voxel_feats), device=voxel_feats.device)
-
+        
         self.set_drop_info()
+        
+        #if multi_window=="high":
+        #    self.shifts_list = [(int(x*1.5), int(y*1.5)) for x, y in  self.shifts_list]
+        #    self.window_shape = [int(x*1.5) for x in self.window_shape]
+        #    self.window_shape[-1] = 1
+        #if multi_window=="middle":
+        #   self.shifts_list = [(x*2, y*2) for x, y in  self.shifts_list]
+        #    self.window_shape = [x*2 for x in self.window_shape]
+        #    self.window_shape[-1] = 1
         voxel_coors = voxel_coors.long()
 
         if self.shuffle_voxels:
@@ -95,9 +126,12 @@ class SSTInputLayerV2(nn.Module):
             # Same structure as above. Positional embedding is done using Sine-Cos embedding within a window, i.e.
             # not related to global position. Position in window is thus x_coord % windows_size_x and same for y
             # Sine-Cosine) 위치 임베딩을 계산
-            voxel_info[f'pos_dict_shift{i}'] = \
-                self.get_pos_embed(voxel_info[f'flat2win_inds_shift{i}'], voxel_info[f'coors_in_win_shift{i}'], voxel_feats.size(1), voxel_feats.dtype)
-
+            if cat:
+                voxel_info[f'pos_dict_shift{i}'] = \
+                    self.get_pos_embed(voxel_info[f'flat2win_inds_shift{i}'], voxel_info[f'coors_in_win_shift{i}'], voxel_feats.size(1)*2, voxel_feats.dtype)
+            else:
+                voxel_info[f'pos_dict_shift{i}'] = \
+                        self.get_pos_embed(voxel_info[f'flat2win_inds_shift{i}'], voxel_info[f'coors_in_win_shift{i}'], voxel_feats.size(1), voxel_feats.dtype)
             voxel_info[f'key_mask_shift{i}'] = \
                 self.get_key_padding_mask(voxel_info[f'flat2win_inds_shift{i}'])
         if self.debug:
@@ -107,13 +141,8 @@ class SSTInputLayerV2(nn.Module):
 
         if self.shuffle_voxels:
             voxel_info['shuffle_inds'] = shuffle_inds
-        
+                
         return voxel_info
-    
-    def get_multi_voxel_feature(self, voxel_mid_features, feature_mid_coors, voxel_low_features, feature_low_coors):
-        low_feature = self.low_features_spconv([int(feature_low_coors[-1][0] + 1), voxel_low_features, feature_low_coors]) #self.grid_size)
-        mid_feature = self.mid_features_spconv([int(feature_mid_coors[-1][0] + 1), voxel_mid_features, feature_mid_coors])
-        return low_feature, mid_feature
          
     def drop_single_shift(self, batch_win_inds):
         drop_info = self.drop_info

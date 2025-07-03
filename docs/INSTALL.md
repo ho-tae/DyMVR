@@ -11,13 +11,13 @@ All the codes are tested in the following environment:
 ### Set up a new conda environment
 
 ```
-conda create -n dymvr python=3.8
+conda create -n CMKDK python=3.8
 ```
 
 ### Install CMKD
 a. Clone this repository.
 ```shell
-git clone https://github.com/ho-tae/DyMVR.git
+git clone https://github.com/Cc-Hy/CMKD
 ```
 
 b. Install the dependent libraries as follows:

@@ -5,6 +5,7 @@ from .sst_input_layer_v2_masked import SSTInputLayerV2Masked
 from .sst_input_layer_v2 import SSTInputLayerV2
 from .sst_input_layer_ours import SSTConvInputLayer
 from .multi_mae_sst_separate_top_only import MultiMAESSTSPChoose
+from .vfe.vf_encoder import MultiFusionVoxel
 
 __all__ = {
     'VoxelBackBone8x': VoxelBackBone8x,
@@ -18,5 +19,6 @@ __all__ = {
     'SSTInputLayerV2Masked': SSTInputLayerV2Masked,
     'SSTInputLayerV2': SSTInputLayerV2, 
     'MultiMAESSTSPChoose': MultiMAESSTSPChoose,
-    'SSTConvInputLayer' : SSTConvInputLayer
+    'SSTConvInputLayer' : SSTConvInputLayer,
+    'MultiFusionVoxel' : MultiFusionVoxel
 }

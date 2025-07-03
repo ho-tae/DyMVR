@@ -22,7 +22,7 @@ class WindowAttention(nn.Module):
         self.layer_id = layer_id
 
 
-    def forward(self, feat_2d, pos_dict, ind_dict, key_padding_dict):
+    def forward(self, feat_2d, pos_dict, ind_dict, key_padding_dict, cross_att=False):
         '''
         Args:
 
@@ -31,7 +31,10 @@ class WindowAttention(nn.Module):
         '''
 
         out_feat_dict = {}
-
+        if cross_att:
+            top_feats = feat_2d[:int((feat_2d.shape[0])/2)]
+            feat_2d = feat_2d[int((feat_2d.shape[0])/2):]
+            top_feat_3d_dict = flat2window_v2(top_feats, ind_dict)
         feat_3d_dict = flat2window_v2(feat_2d, ind_dict)
 
         for name in feat_3d_dict:
@@ -41,14 +44,27 @@ class WindowAttention(nn.Module):
             feat_3d = feat_3d_dict[name]
             feat_3d = feat_3d.permute(1, 0, 2)
 
-            v = feat_3d
-
-            if pos is not None:
-                pos = pos.permute(1, 0, 2)
-                assert pos.shape == feat_3d.shape, f'pos_shape: {pos.shape}, feat_shape:{feat_3d.shape}'
-                q = k = feat_3d + pos
+            if not cross_att:
+                if pos is not None:
+                    pos = pos.permute(1, 0, 2)
+                    assert pos.shape == feat_3d.shape
+                    
+                    v = feat_3d 
+                    q = k = feat_3d + pos
+                else:
+                    q = k = feat_3d
             else:
-                q = k = feat_3d
+                if pos is not None:
+                    pos = pos.permute(1, 0, 2)
+                    assert pos.shape == feat_3d.shape
+                    top_feats = top_feat_3d_dict[name]
+                    top_feats = top_feats.permute(1, 0, 2)
+                    
+                    v = feat_3d 
+                    q = top_feats + pos
+                    k = feat_3d + pos
+                else:
+                    q = k = feat_3d
 
             key_padding_mask = key_padding_dict[name]
             
@@ -94,10 +110,14 @@ class EncoderLayer(nn.Module):
         pos_dict,
         ind_dict,
         key_padding_mask_dict,
+        cross_att=False
         ):
         if self.post_norm:
-            src2 = self.win_attn(src, pos_dict, ind_dict, key_padding_mask_dict) #[N, d_model]
-            src = src + self.dropout1(src2)
+            src2 = self.win_attn(src, pos_dict, ind_dict, key_padding_mask_dict, cross_att) #[N, d_model]
+            if cross_att:
+                src = src[:int((src.shape[0])/2)] + self.dropout1(src2)
+            else:
+                src = src + self.dropout1(src2)
             src = self.norm1(src)
             src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
             src = src + self.dropout2(src2)
@@ -134,6 +154,7 @@ class BasicShiftBlockV2(nn.Module):
         ind_dict_list,
         key_mask_dict_list,
         using_checkpoint=False,
+        cross_atten=False,
         ):
         num_shifts = len(pos_dict_list)
         assert num_shifts in (1, 2)
@@ -148,10 +169,26 @@ class BasicShiftBlockV2(nn.Module):
 
             layer = self.encoder_list[i]
             if using_checkpoint and self.training:
-                output = checkpoint(layer, output, pos_dict, ind_dict, key_mask_dict)
+                #output = checkpoint(layer, output, pos_dict, ind_dict, key_mask_dict)
+                if not cross_atten:
+                    cross_att=False
+                    output = checkpoint(layer, output, pos_dict, ind_dict, key_mask_dict, cross_att)
+                else:
+                    cross_att=True
+                    if i==0:
+                        output = checkpoint(layer, output, pos_dict, ind_dict, key_mask_dict, cross_att)
+                    else:
+                        output = torch.cat([src[:int((src.shape[0])/2)], output])
+                        output = checkpoint(layer, output, pos_dict, ind_dict, key_mask_dict, cross_att)
             else:
-                output = layer(output, pos_dict, ind_dict, key_mask_dict)
-
+                if not cross_atten:
+                    output = layer(output, pos_dict, ind_dict, key_mask_dict, cross_att=False)
+                else:
+                    if i==0:
+                        output = layer(output, pos_dict, ind_dict, key_mask_dict, cross_att=True)
+                    else:
+                        output = torch.cat([src[:int((src.shape[0])/2)], output])
+                        output = layer(output, pos_dict, ind_dict, key_mask_dict, cross_att=True)
         return output
 
 def _get_activation_fn(activation):
